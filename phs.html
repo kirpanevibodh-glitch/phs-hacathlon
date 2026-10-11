@@ -1,0 +1,653 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>SOS ATC</title>
+<style>
+body { margin: 0; background: #141618; color: #ddd; }
+button, select { background: #23272b; color: #ddd; border: 1px solid #444; cursor: pointer; }
+button.on { background: #ddd; color: #000; }
+a { color: #ddd; }
+#top, .box { border: 1px solid #444; padding: 4px; }
+.box h3 { margin: -4px -4px 4px; padding: 4px; background: #23272b; }
+#grid { display: grid; grid-template-columns: 3fr 2fr; }
+#bottom { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); }
+#stepsBox { grid-column: span 2; }
+.box { overflow: auto; max-height: 420px; }
+table { border-collapse: collapse; width: 100%; }
+td, th { border-bottom: 1px solid #444; text-align: left; }
+.g { color: #999; } .ok { color: #9c9; } .bad { color: #e88; } .now { color: #fc6; font-weight: bold; } .done { opacity: .4; }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.home #grid, .home #bottom, body:not(.home) #home, .pilot .op, body:not(.pilot) .pi { display: none; }
+.pilot #grid { grid-template-columns: 1fr; }
+#map { width: 100%; display: block; background: #04100d; }
+.t1 { fill: #0a2119; } .t2 { fill: #0f2e22; } .t3 { fill: #163d2c; } .t4 { fill: #1f4d37; } .t5 { fill: #2a5e44; }
+svg text { font-size: 8px; fill: #8fb7a8; }
+.af rect { fill: #5cc8ff; } .af text { fill: #5cc8ff; } .af.no { opacity: .35; }
+.af.pick rect, .af.pick text, .af.chosen rect, .af.chosen text { fill: #ffb84d; }
+.pl path { fill: #3ee08f; } .pl text { fill: #3ee08f; } .pl.help path { fill: #b4ffda; }
+.pl.em path { fill: #ff4d4d; } .pl.em text { fill: #ff9a9a; } .pl.real path, .pl.real text { fill: #c9a2ff; } .pl.sos path { fill: #f66; }
+.flash { animation: b .8s steps(2) infinite; } @keyframes b { 50% { opacity: .15; } }
+.mk circle, .mk path { fill: #04100d; } .mk text { fill: #fff; }
+#pop { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 420px; max-width: 90vw; background: #23272b; border: 1px solid #ddd; padding: 8px; z-index: 9; }
+#pop.side { top: auto; left: auto; right: 10px; bottom: 10px; transform: none; width: 340px; }
+.hl { outline: 3px solid #fc6; }
+</style>
+</head>
+<body>
+<div id="top">
+  <b>SOS ATC</b> plane emergency simulator - school project, not real!
+  <span class="op"><button data-do="home">Home</button><button data-do="tut">Tutorial</button> <a href="#pilot" target="_blank" id="pilotLink">Pilot view</a></span>
+  <button data-do="unit" data-v="kph" id="kph">KPH</button><button data-do="unit" data-v="mph" id="mph">MPH</button>
+  <span id="status"></span>
+</div>
+<div id="home" class="box">
+  <h1>SOS ATC</h1>
+  <p>Our hackathon project ("Into the Sky"). When a plane has an emergency it finds airports it can land at safely,
+    plans a route around storms and mountains, gives step by step instructions and sends other planes to help.
+    Everything is made up, don't use it for real flying!</p>
+  <ol>
+    <li>Open the simulator, pick a scenario and press Start.</li>
+    <li>Pick a plane and press Trigger emergency, then pick an airport (Land here, or click it on the map).</li>
+    <li>Send a helper with Ask to help. Open the Pilot view in another tab to see what the pilot sees.</li>
+    <li>Real weather comes from Open-Meteo. Live planes need <code>python phs_server.py</code>.</li>
+  </ol>
+  <button data-do="enter">Open simulator</button>
+</div>
+<div id="grid">
+  <div>
+    <svg id="map" viewBox="0 0 600 400"><defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <line y2="6" stroke="#b06cff" stroke-width="1.5"/></pattern></defs><g id="ground"></g><g id="things"></g></svg>
+    <div class="box g">orange = storm, red dashed = no planes allowed, purple lines = restricted, blue = airports,
+      red line = emergency route, green line = helper route, purple planes = real planes, blue = real rain and wind</div>
+    <div class="box pi" id="pilotBox"></div>
+  </div>
+  <div class="op">
+    <div class="box" id="simBox">
+      <h3>Simulation</h3>
+      <button data-do="start">Start</button><button data-do="pause">Pause</button><button data-do="reset">Reset</button>
+      <select id="speed"><option value="1">1x real time</option><option>10</option><option>30</option><option>60</option></select><br>
+      <button data-do="scen" data-v="mountain">Mountain storm</button><button data-do="scen" data-v="front">Moving front</button><button data-do="scen" data-v="health">Health emergency</button><br>
+      <select id="pickPlane"></select><button data-do="trigger">Trigger emergency</button><br>
+      <button data-do="worse">Storm worse</button><button data-do="better">Storm better</button><button data-do="east">Move storm east</button><br>
+      <span id="dataBtns"><button data-do="realwx" id="wxBtn"></button><button data-do="live" id="liveBtn"></button></span>
+    </div>
+    <div class="box" id="emBox"></div>
+  </div>
+</div>
+<div id="bottom" class="op">
+  <div class="box" id="stepsBox"></div><div class="box" id="msgBox"></div><div class="box" id="nearBox"></div>
+  <div class="box" id="wxBox"></div><div class="box" id="liveBox"></div><div class="box" id="logBox"></div>
+</div>
+<div id="pop" hidden></div>
+<script>
+// SOS ATC - our hackathon project. everything is made up, NOT real flight stuff
+const KM = 8, W = 60, H = 40, PX = 10; // 1 square = 8 km, map is 60 x 40 squares, 10 pixels per square
+const HARD = 0.5, CLEAR = 2000; // never fly where the storm is 0.5+, stay 2000 ft above the ground
+const REPORT_SEC = 240, OLD_SEC = 120, STORM_SPEED = 96 / 3600 / KM;
+const MOUNTAINS = [[20, 3, 10500, 3.5], [21, 9, 11000, 3.5], [22, 15, 11500, 3.5], [22, 21, 10000, 3.5], [38, 28, 9000, 5], [48, 10, 8000, 4], [10, 31, 6500, 5]];
+const R7 = [28, 31, 3, 9]; // restricted area x0 x1 y0 y1
+const AIRPORTS = [["AF-NORDA", "Norda Field", 6, 5], ["AF-KESTREL", "Kestrel Strip", 53, 6], ["AF-VALE", "Vale Regional", 30, 35],
+  ["AF-PINE", "Pine Hollow", 7, 35], ["AF-RIDGE", "Ridge Point", 54, 33]].map(([id, name, x, y]) => ({ id, name, x, y }));
+const FLEET = [["SG-101", 10, 8, 16000, 250, [[48, 6], [52, 20], [30, 14], [10, 8]]], ["SG-102", 50, 30, 18000, 280, [[20, 36], [6, 22], [34, 28], [50, 30]]],
+  ["SG-103", 40, 12, 15000, 230, [[56, 24], [44, 36], [26, 22], [40, 12]]], ["SG-104", 6, 30, 17000, 260, [[20, 4], [36, 6], [22, 30], [6, 30]]]];
+const SCENARIOS = {
+  mountain: { name: "Mountain storm", storms: [{ x: 23, y: 30, r: 9, sev: 0.85, vx: 0 }], kind: "Cabin pressure problem", ceiling: 11000, range: 320, cantHelp: "AF-VALE", failFirst: "airfield" },
+  front: { name: "Moving front", storms: [{ x: 0, y: 8, r: 6, sev: 0.8, vx: STORM_SPEED }, { x: -2, y: 20, r: 7, sev: 0.9, vx: STORM_SPEED }, { x: 1, y: 32, r: 6, sev: 0.75, vx: STORM_SPEED }],
+    kind: "Engine shaking", ceiling: 14000, range: 300, cantHelp: "", failFirst: "traffic" },
+  health: { name: "Health emergency", storms: [{ x: 40, y: 20, r: 9, sev: 0.9, vx: 0 }], kind: "Sick passenger, land within 20 min", ceiling: 25000, range: 150, cantHelp: "AF-NORDA AF-KESTREL", failFirst: "airfield" }, };
+const WHY = { storm: "bad storm in the way", terrain: "mountains too high", restricted: "restricted airspace", range: "too far", unreachable: "can't get there", removed: "removed (can't help)" };
+const SHAPE = "M0,-8 L1.3,-3 L8,1 L8,2.6 L1.3,1 L1.1,5 L3.5,7 L3.5,8.2 L0,7.2 L-3.5,8.2 L-3.5,7 L-1.1,5 L-1.3,1 L-8,2.6 L-8,1 L-1.3,-3 Z";
+const $ = (id) => document.getElementById(id);
+const copy = (o) => JSON.parse(JSON.stringify(o));
+const dist = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1]);
+const inMap = (x, y) => x >= 0 && x < W && y >= 0 && y < H;
+const cell = (p) => [Math.floor(p[0]), Math.floor(p[1])];
+const mid = (c) => [c[0] + 0.5, c[1] + 0.5];
+const hdgTo = (a, b) => (Math.atan2(b[0] - a[0], a[1] - b[1]) * 180 / Math.PI + 360) % 360;
+const ft = (n) => Math.round(n).toLocaleString("en-US");
+const h3 = (n) => String(Math.round(n) % 360).padStart(3, "0");
+const latLon = (p) => [47.2 - p[1] * KM / 111, 6 + p[0] * KM / 75.7];
+const where = (p) => latLon(p)[0].toFixed(2) + "N " + latLon(p)[1].toFixed(2) + "E";
+const mins = (km, kt) => Math.round(km / (kt * 1.852) * 60);
+const sum = (list, f) => list.reduce((s, x) => s + f(x), 0);
+let unit = "kph";
+const spd = (kt) => unit === "kph" ? Math.round(kt * 1.852) + " km/h" : Math.round(kt * 1.151) + " mph";
+const wind = (kmh) => unit === "kph" ? Math.round(kmh) + " km/h" : Math.round(kmh / 1.609) + " mph";
+const GROUND = []; // height of the ground in every square
+for (let y = 0; y < H; y++) { GROUND.push([]); for (let x = 0; x < W; x++) GROUND[y].push(Math.round(800 + sum(MOUNTAINS, ([mx, my, h, s]) => h * Math.exp(-((x + .5 - mx) ** 2 + (y + .5 - my) ** 2) / (s * s))))); }
+const stormAt = (storms, x, y, extra = 0) => Math.max(0, ...storms.map((s) => { const r = s.r + extra, d = Math.hypot(x - s.x, y - s.y); return d < r ? s.sev * (1 - (d / r) ** 2) : 0; }));
+const stormInCell = (storms, cx, cy, extra) => Math.max(0, ...storms.map((s) => stormAt([s], Math.min(Math.max(s.x, cx), cx + 1), Math.min(Math.max(s.y, cy), cy + 1), extra))); // worst spot in the square
+function blocked(ctx, x, y, skip = "") {
+  if (skip !== "storm" && stormInCell(ctx.storms, x, y, ctx.extra) >= HARD) return "storm";
+  if (skip !== "terrain" && GROUND[y][x] + CLEAR > ctx.ceiling) return "terrain";
+  if (skip !== "restricted" && x >= R7[0] && x <= R7[1] && y >= R7[2] && y <= R7[3]) return "restricted";
+  return ""; }
+function canGo(ctx, a, b, skip) {
+  const why = blocked(ctx, b[0], b[1], skip);
+  return !why || (why === "storm" && blocked(ctx, a[0], a[1], skip) === "storm" && stormAt(ctx.storms, b[0] + .5, b[1] + .5, ctx.extra) <= stormAt(ctx.storms, a[0] + .5, a[1] + .5, ctx.extra)); }
+function findPath(ctx, start, goal, skip) {
+  if (!inMap(...goal) || blocked(ctx, goal[0], goal[1], skip)) return null;
+  const best = Array(W * H).fill(Infinity), from = Array(W * H).fill(-1), done = Array(W * H).fill(false), open = [];
+  const push = (pri, i) => { open.push([pri, i]); let k = open.length - 1; while (k && open[(k - 1) >> 1][0] > open[k][0]) { [open[k], open[(k - 1) >> 1]] = [open[(k - 1) >> 1], open[k]]; k = (k - 1) >> 1; } };
+  const pop = () => { const top = open[0], last = open.pop(); if (open.length) { open[0] = last; let k = 0; for (;;) { let s = k; for (const c of [2 * k + 1, 2 * k + 2]) if (c < open.length && open[c][0] < open[s][0]) s = c; if (s === k) break; [open[k], open[s]] = [open[s], open[k]]; k = s; } } return top[1]; };
+  const s = start[1] * W + start[0], g = goal[1] * W + goal[0];
+  best[s] = 0; push(0, s);
+  while (open.length) {
+    const cur = pop();
+    if (done[cur]) continue;
+    done[cur] = true;
+    if (cur === g) { const cells = []; for (let c = cur; c !== -1; c = from[c]) cells.unshift([c % W, Math.floor(c / W)]); return { cells, cost: best[cur] }; }
+    const cx = cur % W, cy = Math.floor(cur / W);
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const nx = cx + dx, ny = cy + dy, n = ny * W + nx;
+      if ((!dx && !dy) || !inMap(nx, ny) || done[n] || !canGo(ctx, [cx, cy], [nx, ny], skip)) continue;
+      if (dx && dy && (!canGo(ctx, [cx, cy], [nx, cy], skip) || !canGo(ctx, [cx, cy], [cx, ny], skip))) continue; // no cutting corners
+      const step = dx && dy ? 1.414 : 1, spare = ctx.ceiling - GROUND[ny][nx] - CLEAR;
+      const c = best[cur] + step * (1 + 8 * stormAt(ctx.storms, nx + .5, ny + .5, ctx.extra) + (spare < 4000 ? (4000 - spare) / 2500 : 0)); // costs more near storms and mountains
+      if (c < best[n]) { best[n] = c; from[n] = cur; push(c + Math.hypot(nx - goal[0], ny - goal[1]), n); } } }
+  return null; }
+function lineClear(ctx, a, b) {
+  const n = Math.ceil(dist(a, b) * 4) || 1;
+  let prev = cell(a);
+  for (let i = 1; i <= n; i++) {
+    const c = cell([a[0] + (b[0] - a[0]) * i / n, a[1] + (b[1] - a[1]) * i / n]);
+    if (c[0] === prev[0] && c[1] === prev[1]) continue;
+    if (!inMap(...c) || !canGo(ctx, prev, c)) return false;
+    prev = c; }
+  return true; }
+function makePath(ctx, pos, cells, goal) { // squares -> a few straight lines
+  const pts = [pos, ...cells.slice(1).map(mid)];
+  if (pts.length === 1) pts.push(mid(goal));
+  const out = [pos];
+  for (let i = 0, j; i < pts.length - 1; i = j) { for (j = pts.length - 1; j > i + 1 && !lineClear(ctx, pts[i], pts[j]); j--); out.push(pts[j]); }
+  return out; }
+const pathKm = (pts) => pts.slice(1).reduce((s, p, i) => s + dist(pts[i], p), 0) * KM;
+function checkAirport(ctx, pos, goal, range) {
+  const r = findPath(ctx, cell(pos), goal);
+  if (r) { const pts = makePath(ctx, pos, r.cells, goal), km = Math.round(pathKm(pts) * 10) / 10; return km > range ? { ok: false, why: "range", km } : { ok: true, pts, km, cost: r.cost }; }
+  return { ok: false, why: ["storm", "terrain", "restricted"].find((rule) => findPath(ctx, cell(pos), goal, rule)) || "unreachable" }; // find out why by ignoring one rule at a time
+}
+const needAlt = (ground, ceiling) => Math.min(ceiling, Math.max(4000, Math.ceil((ground + CLEAR) / 1000) * 1000));
+const stormGap = (s, p) => Math.max(0, dist(p, [s.x, s.y]) - (s.sev >= HARD ? s.r * Math.sqrt(1 - HARD / s.sev) : s.r)) * KM; // km to the bad part
+function makeSteps(ctx, pts, startAlt, cruise, endAlt) {
+  cruise = Math.min(cruise, ctx.ceiling);
+  const total = pathKm(pts), steps = [];
+  let gone = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i], n = Math.ceil(dist(a, b) * 4) || 1, hdg = Math.round(hdgTo(a, b) / 5) * 5 % 360, km = dist(a, b) * KM / n;
+    const ux = Math.sin(hdg * Math.PI / 180), uy = -Math.cos(hdg * Math.PI / 180);
+    for (let k = 1; k <= n; k++) {
+      const p = [a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n];
+      gone += km;
+      const ground = Math.max(...[-1, 0, 1].map((d) => { const c = cell([p[0] + ux * d, p[1] + uy * d]); return inMap(...c) ? GROUND[c[1]][c[0]] : 0; })); // look 1 square ahead and behind
+      const alt = Math.max(needAlt(ground, ctx.ceiling), Math.min(cruise, Math.ceil((endAlt + (total - gone) * 160) / 2000) * 2000));
+      const st = ctx.storms.map((s) => ({ km: stormGap(s, p), dir: ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][Math.round(hdgTo(p, [s.x, s.y]) / 45) % 8], sev: s.sev })).filter((s) => s.km < 60).sort((x, y) => x.km - y.km)[0];
+      const last = steps[steps.length - 1];
+      if (last && last.hdg === hdg && last.alt === alt) Object.assign(last, { km: last.km + km, to: p, ground: Math.max(last.ground, ground), storm: !st || last.storm && last.storm.km < st.km ? last.storm : st });
+      else steps.push({ hdg, alt, km, to: p, ground, storm: st, cruise }); } }
+  for (let i = steps.length - 1; i > 0; i--) { // steps under 10 km get added to the one before
+    const s = steps[i], b = steps[i - 1];
+    if (s.km < 10 && s.hdg === b.hdg) { Object.assign(b, { km: b.km + s.km, to: s.to, alt: Math.max(b.alt, s.alt), ground: Math.max(b.ground, s.ground), storm: b.storm || s.storm }); steps.splice(i, 1); } }
+  steps.forEach((s, i) => s.prev = i ? steps[i - 1].alt : startAlt);
+  return steps; }
+const verb = (s) => (s.alt > s.prev ? "Climb to " : s.alt < s.prev ? "Go down to " : "Stay at ") + ft(s.alt) + " ft";
+const why = (s) => (s.alt <= needAlt(s.ground, 1e9) ? "set by the ground" : s.alt < s.cruise ? "going down to land" : "cruise") + ", ground up to " + ft(s.ground) + " ft" +
+  (s.storm ? ", storm (" + s.storm.sev.toFixed(1) + ") " + Math.round(s.storm.km) + " km " + s.storm.dir + " - keep away" : ", no storms near");
+function kmDone(steps, p) { let left = 0, prev = [p.x, p.y]; for (const q of p.path) { left += dist(prev, q); prev = q; } return sum(steps, (s) => s.km) - left * KM; }
+function stepNow(steps, p) { const d = kmDone(steps, p); let t = 0; for (let i = 0; i < steps.length; i++) if ((t += steps[i].km) > d + .05) return i; return steps.length - 1; }
+function changeAlt(p, target) { const most = (target > p.alt ? 2000 : 3000) / 60 * S.dt; p.alt = Math.abs(target - p.alt) <= most ? target : p.alt + Math.sign(target - p.alt) * most; } // 2000 ft/min up, 3000 down
+function followSteps(p, steps, i) { const now = steps[i], next = steps[i + 1]; if (now) changeAlt(p, next && next.alt > now.alt ? next.alt : now.alt); } // climb early
+const PILOT = location.hash === "#pilot";
+let S, msgId = 1, timeScale = 1;
+function load(scen) {
+  const sc = SCENARIOS[scen];
+  S = { scen, tick: 0, t: 0, dt: 0, running: false, storms: copy(sc.storms), report: { storms: copy(sc.storms), t: 0 }, chosenPlane: S ? S.chosenPlane : "SG-103",
+    planes: FLEET.map(([id, x, y, alt, kt, loop]) => ({ id, x: x + .5, y: y + .5, alt, cruise: alt, kt, loop, wp: 0, path: [], route: null, heading: 90, status: "", replanAt: 0 })),
+    em: null, helperId: null, preview: null, reach: {}, messages: [], log: [], failUsed: false, py: null, pyAt: 0 };
+  log("Loaded " + sc.name + ". Press Start.");
+  if (wx.on && wx.points.length) useRealWeather(); }
+const plane = (id) => S.planes.find((p) => p.id === id);
+const clock = () => { const s = Math.floor(S.t); return "T+" + [s / 3600, s / 60 % 60, s % 60].map((n) => String(Math.floor(n)).padStart(2, "0")).join(":"); };
+function log(text) { S.log.unshift(clock() + " " + text); S.log.length = Math.min(S.log.length, 150); }
+function newReport() { S.report = { storms: copy(S.storms), t: S.t }; }
+const reportAge = () => Math.floor(S.t - S.report.t);
+const reportOld = () => S.storms.some((s) => s.vx) && reportAge() >= OLD_SEC;
+function emCtx() { // emergency plane uses the last report, plus extra space if it's old and storms move
+  const old = reportOld() ? Math.min(4, Math.max(...S.storms.map((s) => s.vx || 0)) * reportAge()) : 0;
+  return { storms: S.report.storms, ceiling: S.em.ceiling, extra: 0.5 + old, old }; }
+function weatherChanged(what) {
+  newReport(); log("Weather update: " + what + ".");
+  S.planes.forEach((p) => p.replanAt = 0);
+  if (S.em && !S.em.arrived) planEmergency("re-planned after the weather changed"); }
+const holdTurn = (p) => p.heading = (p.heading + 3 * S.dt) % 360; // circling: 3 degrees a second like real planes
+const planeCtx = (p) => ({ storms: S.storms, ceiling: p.cruise, extra: 1 });
+function move(p) {
+  let left = p.kt * 1.852 / 3600 * S.dt / KM;
+  while (left > 0 && p.path.length) {
+    const t = p.path[0], d = dist([p.x, p.y], t);
+    if (d > 1e-6) p.heading = hdgTo([p.x, p.y], t);
+    if (d <= left) { [p.x, p.y] = t; p.path.shift(); left -= d; } else { p.x += (t[0] - p.x) / d * left; p.y += (t[1] - p.y) / d * left; left = 0; } } }
+function updateNormal(p) {
+  const ctx = planeCtx(p);
+  if (!p.path.length || S.t >= p.replanAt || !lineClear(ctx, [p.x, p.y], p.path[0])) {
+    p.replanAt = S.t + 90; p.status = "holding"; p.path = [];
+    for (let i = 0; i < p.loop.length && p.status; i++) {
+      const goal = p.loop[p.wp], r = findPath(ctx, cell([p.x, p.y]), goal);
+      if (r && r.cells.length > 1) { p.path = makePath(ctx, [p.x, p.y], r.cells, goal).slice(1); p.status = ""; } else p.wp = (p.wp + 1) % p.loop.length; } }
+  changeAlt(p, p.cruise);
+  if (p.status) return holdTurn(p);
+  move(p);
+  if (!p.path.length) { p.wp = (p.wp + 1) % p.loop.length; p.replanAt = 0; } }
+function trigger() {
+  if (S.em) return log("There's already an emergency.");
+  const p = plane(S.chosenPlane), sc = SCENARIOS[S.scen];
+  S.em = { planeId: p.id, kind: sc.kind, ceiling: sc.ceiling, range: sc.range, airports: [], route: null, chosen: null, removed: [], told: null, cantHelp: null, arrived: false, helped: false };
+  p.status = "emergency"; p.path = []; S.helperId = null;
+  log("EMERGENCY: " + p.id + " - " + sc.kind + ". Max " + ft(sc.ceiling) + " ft, range " + sc.range + " km.");
+  planEmergency("planned");
+  send("traffic", "All nearby planes", "Warning: " + p.id + " has an emergency, stay away from its route"); }
+function planEmergency(how) {
+  const em = S.em, p = plane(em.planeId), ctx = emCtx(), routes = {}, had = !!em.route;
+  em.airports = AIRPORTS.map((a) => {
+    if (em.removed.includes(a.id)) return { id: a.id, ok: false, why: "removed" };
+    const c = checkAirport(ctx, [p.x, p.y], [a.x, a.y], em.range);
+    routes[a.id] = c.pts;
+    return { id: a.id, ok: c.ok, why: c.why, km: c.km, cost: c.cost, eta: c.ok ? mins(c.km, p.kt) : null }; });
+  em.airports.filter((a) => a.ok).sort((a, b) => a.cost - b.cost).forEach((a, i) => a.rank = i + 1);
+  em.oldWeather = ctx.old > 0;
+  const a = em.airports.find((x) => x.id === em.chosen);
+  if (em.chosen && !a.ok) { log(em.chosen + " isn't safe anymore (" + WHY[a.why] + "). Pick another airport."); em.chosen = null; em.said = ""; }
+  if (!em.chosen) { // the user picks the airport, not us
+    em.route = null; p.path = [];
+    if (had) resetHelpers();
+    const ok = em.airports.filter((x) => x.ok).map((x) => x.id), msg = ok.length ? ok.length + " airports are safe: " + ok.join(", ") + ". " + p.id + " circles until you pick one." : "No airport is safe right now. " + p.id + " circles.";
+    if (em.said !== msg) log(msg);
+    em.said = msg;
+    return; }
+  const af = AIRPORTS.find((x) => x.id === em.chosen), pts = routes[af.id];
+  em.route = { airport: af.id, name: af.name, pts, km: a.km, steps: makeSteps(ctx, pts, p.alt, Math.min(p.alt, em.ceiling), GROUND[af.y][af.x] + 2000) };
+  p.path = pts.slice(1);
+  resetHelpers();
+  log("Route " + how + ": " + p.id + " to " + af.id + ", " + a.km + " km, " + em.route.steps.length + " steps." + (em.oldWeather ? " Weather is old so we kept extra space around storms." : ""));
+  send("pilot", p.id, "New route: fly to " + af.id + ", " + em.route.steps.length + " steps");
+  if (em.told !== af.id) { em.told = af.id; send("airfield", af.id, "Please get ready for " + p.id + ": " + em.kind); } }
+function pick(id) {
+  const em = S.em, a = em && em.airports.find((x) => x.id === id);
+  if (!a || !a.ok || em.arrived || em.chosen === id) return;
+  em.chosen = id; log("You picked " + id + "."); planEmergency("planned"); }
+const stepIndex = () => S.em.route ? stepNow(S.em.route.steps, plane(S.em.planeId)) : -1;
+function updateEmergency() {
+  const em = S.em, p = plane(em.planeId);
+  if (em.arrived) return;
+  if (!em.route) { holdTurn(p); return changeAlt(p, Math.min(p.alt, em.ceiling)); }
+  if (p.path.length && !lineClear({ storms: S.storms, ceiling: em.ceiling, extra: 0 }, [p.x, p.y], p.path[0])) { // the plane's radar sees the real storm
+    newReport(); log("The plane's radar sees a storm in the way."); planEmergency("re-planned");
+    if (!em.route) return; }
+  followSteps(p, em.route.steps, stepIndex());
+  move(p);
+  if (!p.path.length) { const af = AIRPORTS.find((x) => x.id === em.route.airport); em.arrived = true; p.status = "landed"; p.alt = GROUND[af.y][af.x]; log(p.id + " landed at " + af.id + "."); checkHelped(); } }
+function checkHelped() {
+  const em = S.em;
+  if (em && em.arrived && !em.helped && S.messages.some((m) => m.kind === "airfield" && m.to === em.route.airport && m.can)) { em.helped = true; log(em.route.airport + " is helping " + em.planeId + "."); } }
+function planMeeting(h) {
+  const em = S.em, e = plane(em.planeId), hctx = planeCtx(h), ectx = { storms: S.storms, ceiling: em.ceiling, extra: .5 };
+  const hSpeed = h.kt * 1.852 / 60, eSpeed = e.kt * 1.852 / 60, spots = [];
+  if (em.route && e.path.length) { // a spot every 16 km on the emergency route (not in the last 24 km)
+    const done = kmDone(em.route.steps, e);
+    let prev = [e.x, e.y], d = 0, next = 0;
+    for (const q of e.path) {
+      const seg = dist(prev, q);
+      for (; next <= d + seg; next += 2) { const f = seg ? (next - d) / seg : 0; spots.push({ pt: [prev[0] + (q[0] - prev[0]) * f, prev[1] + (q[1] - prev[1]) * f], d: next }); }
+      d += seg; prev = q; }
+    spots.forEach((s) => { s.km = done + s.d * KM; s.eMin = s.d * KM / eSpeed; let t = 0; s.alt = (em.route.steps.find((x) => (t += x.km) >= s.km) || em.route.steps[em.route.steps.length - 1]).alt; s.late = (d - s.d) * KM < 24; });
+  } else { // emergency plane is circling, wait close to it
+    const c = cell([e.x, e.y]);
+    for (let dy = -6; dy <= 6; dy++) for (let dx = -6; dx <= 6; dx++) spots.push({ pt: mid([c[0] + dx, c[1] + dy]), eMin: 0, alt: e.alt, standby: true, r: Math.hypot(dx, dy) });
+    spots.sort((a, b) => a.r - b.r); }
+  const safe = spots.filter((s) => { const c = cell(s.pt); return !s.late && inMap(...c) && !blocked(hctx, ...c) && !blocked(ectx, ...c) && S.storms.every((st) => stormGap(st, mid(c)) >= 16); });
+  if (!safe.length) return { ok: false, why: "no safe meeting point" };
+  for (const s of safe) { // first spot the helper can reach in time (max 2 min late)
+    if (!s.standby && dist([h.x, h.y], s.pt) * KM / hSpeed > s.eMin + 2) continue;
+    const goal = cell(s.pt), r = findPath(hctx, cell([h.x, h.y]), goal);
+    if (!r) continue;
+    const pts = makePath(hctx, [h.x, h.y], r.cells, goal), km = pathKm(pts);
+    pts[pts.length - 1] = s.pt;
+    if (!s.standby && km / hSpeed > s.eMin + 2) continue;
+    const alt = Math.min(h.cruise, Math.max(needAlt(GROUND[goal[1]][goal[0]], h.cruise), s.alt + 1000));
+    return { ok: true, pts, km: Math.round(km), steps: makeSteps(hctx, pts, h.alt, h.cruise, alt),
+      meet: { pt: s.pt, alt, km: s.km, standby: s.standby, eMin: Math.round(s.eMin), hMin: Math.round(km / hSpeed), ground: GROUND[goal[1]][goal[0]], stormKm: Math.round(Math.min(999, ...S.storms.map((st) => stormGap(st, s.pt)))) } }; }
+  return safe[0].standby ? { ok: false, why: "can't reach a safe spot" } : { ok: false, late: true, why: "can't get there in time" }; }
+const passed = (m) => m && !m.standby && S.em.route && kmDone(S.em.route.steps, plane(S.em.planeId)) > m.km + KM;
+const timing = (m, id) => m.standby ? "wait until " + id + " has a route" : "there in ~" + m.hMin + " min, " + (m.eMin >= m.hMin ? m.eMin - m.hMin + " min before " : m.hMin - m.eMin + " min after (catches up) ") + id;
+function resetHelpers() { S.planes.forEach((p) => { if (p.helping && !p.joined) { p.route = null; p.path = []; p.replanAt = 0; } }); }
+function updateHelper(p) {
+  const em = S.em, e = plane(em.planeId), ctx = planeCtx(p);
+  if (em.arrived) { Object.assign(p, { helping: false, joined: false, route: null, replanAt: 0 }); return log(p.id + " is done helping."); }
+  if (dist([e.x, e.y], [p.x, p.y]) < 1.2) { // close enough: fly with it, 1000 ft above
+    if (!p.joined) log(p.id + " joined " + e.id + ".");
+    Object.assign(p, { joined: true, heading: e.heading, path: [], route: null });
+    changeAlt(p, Math.min(p.cruise, e.alt + 1000));
+    const behind = [e.x - Math.sin(e.heading * Math.PI / 180) * .9, e.y + Math.cos(e.heading * Math.PI / 180) * .9];
+    if (lineClear(ctx, [p.x, p.y], behind)) [p.x, p.y] = behind;
+    return; }
+  if ((p.path.length && !lineClear(ctx, [p.x, p.y], p.path[0])) || ((!p.route || passed(p.route.meet)) && S.t >= p.replanAt)) {
+    p.replanAt = S.t + 60;
+    const r = planMeeting(p);
+    if (r.late) { Object.assign(p, { helping: false, route: null, path: [], replanAt: 0 }); return log(p.id + " " + r.why + ". Cancelled, pick a closer plane."); }
+    p.route = r.ok ? r : null; p.path = r.ok ? r.pts.slice(1) : [];
+    log(r.ok ? p.id + " goes to meeting point " + where(r.meet.pt) + ": " + r.steps.length + " steps, " + r.km + " km, " + timing(r.meet, e.id) + "." : p.id + ": " + r.why + ", trying again in a minute."); }
+  p.status = !p.route ? "holding" : !p.path.length ? "waiting" : "";
+  if (p.status) { holdTurn(p); if (p.route) changeAlt(p, p.route.meet.alt); return; }
+  followSteps(p, p.route.steps, stepNow(p.route.steps, p));
+  move(p); }
+function askToHelp(id) {
+  if (!S.em || S.em.arrived) return;
+  S.helperId = id;
+  if (S.messages.some((m) => m.kind === "assist" && m.to === id && m.status !== "failed")) return log("Already asked " + id + ".");
+  const r = planMeeting(plane(id));
+  if (r.late) return log("Didn't ask " + id + ": it " + r.why + ".");
+  send("assist", id, "Please help " + S.em.planeId); }
+function send(kind, to, text) {
+  const fail = SCENARIOS[S.scen].failFirst === kind && !S.failUsed;
+  if (fail) S.failUsed = true;
+  if (kind === "pilot") S.messages.forEach((m) => { if (m.kind === "pilot" && !["acknowledged", "replaced"].includes(m.status)) m.status = "replaced"; });
+  S.messages.push({ id: msgId++, kind, to, text, status: "pending", tries: 1, fail, at: S.t, note: "" });
+  log("Message to " + to + ": " + text); }
+function updateMessages() {
+  for (const m of S.messages) {
+    const age = S.t - m.at;
+    if (m.status === "pending" && age >= 48) {
+      if (m.fail && m.tries === 1) { m.status = "failed"; m.note = "no answer"; log("Message to " + m.to + " FAILED. Press Retry."); }
+      else { m.status = "sent"; m.at = S.t; log("Message to " + m.to + " sent."); }
+    } else if (m.status === "sent" && age >= { airfield: 120, traffic: 72, assist: 90 }[m.kind]) {
+      m.status = "acknowledged";
+      if (m.kind === "airfield") {
+        m.can = !SCENARIOS[S.scen].cantHelp.includes(m.to); m.note = m.can ? "they can help" : "they CAN'T help";
+        if (!m.can && S.em && S.em.route && S.em.route.airport === m.to) S.em.cantHelp = m.to;
+        checkHelped();
+      } else if (m.kind === "assist") {
+        m.note = "on the way";
+        if (S.em && !S.em.arrived) Object.assign(plane(m.to), { helping: true, path: [], replanAt: 0 });
+      } else m.note = "ok";
+      log(m.to + " answered: " + m.note + "."); } } }
+function pilotOk(from) {
+  const m = [...S.messages].reverse().find((x) => x.kind === "pilot" && x.status === "sent");
+  if (m) { m.status = "acknowledged"; m.note = "pilot said ok (" + from + ")"; log(m.to + " said ok to the route."); } }
+function nearby() {
+  if (S.py && Date.now() - S.pyAt < 3000) return { list: S.py, src: "my_part.py" };
+  const e = plane(S.em.planeId);
+  return { src: "javascript", list: S.planes.filter((p) => p !== e).map((p) => { const d = Math.round(dist([p.x, p.y], [e.x, e.y]) * KM); return { id: p.id, d, b: Math.round(hdgTo([e.x, e.y], [p.x, p.y])), note: d < 60 ? "CLOSE" : d > 200 ? "TOO FAR" : "" }; }).sort((a, b) => a.d - b.d) }; }
+function updateReach() { // can each plane get to the emergency plane in time? also makes the preview
+  S.reach = {}; S.preview = null;
+  if (!S.em || S.em.arrived) return;
+  for (const p of S.planes) if (p.id !== S.em.planeId) {
+    const r = p.helping && p.route ? p.route : planMeeting(p);
+    S.reach[p.id] = r.ok ? "can " + (r.meet.standby ? "wait nearby" : "meet") + " in ~" + r.meet.hMin + " min" : r.why;
+    if (p.id === S.helperId && !p.helping) S.preview = r; } }
+function tick() {
+  if (!S.running) return;
+  S.tick++; S.dt = timeScale / 10; S.t += S.dt;
+  S.storms.forEach((s) => { s.x += (s.vx || 0) * S.dt; if (s.x - s.r > W) s.x = -s.r; });
+  if (S.t - S.report.t >= REPORT_SEC) {
+    newReport();
+    const em = S.em;
+    if (em && !em.arrived) { const p = plane(em.planeId), pts = [[p.x, p.y], ...p.path], ctx = emCtx(); if (!em.route || pts.some((q, i) => i && !lineClear(ctx, pts[i - 1], q))) planEmergency("re-planned after the new weather report"); } }
+  S.planes.forEach((p) => { if (!S.em || p.id !== S.em.planeId) p.helping && S.em ? updateHelper(p) : updateNormal(p); });
+  if (S.em) updateEmergency();
+  updateMessages();
+  if (S.tick % 10 === 0) updateReach();
+  draw(); }
+const line = (pts, color, dash, op = 1) => `<polyline fill="none" stroke="${color}" stroke-width="2" stroke-dasharray="${dash}" opacity="${op}" points="${pts.map((p) => p[0] * PX + "," + p[1] * PX).join(" ")}"/>`;
+function drawGround() {
+  let s = "";
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const b = Math.min(5, Math.floor(GROUND[y][x] / 2000)); if (b) s += `<rect x="${x * PX}" y="${y * PX}" width="${PX}" height="${PX}" class="t${b}"/>`; }
+  for (let i = 0; i <= W; i += 5) s += `<line x1="${i * PX}" x2="${i * PX}" y2="400" stroke="#10291f"/>` + (i <= H ? `<line y1="${i * PX}" y2="${i * PX}" x2="600" stroke="#10291f"/>` : "");
+  s += `<rect x="${R7[0] * PX}" y="${R7[2] * PX}" width="${(R7[1] - R7[0] + 1) * PX}" height="${(R7[3] - R7[2] + 1) * PX}" fill="url(#hatch)" stroke="#b06cff"/><text x="${R7[0] * PX}" y="${R7[2] * PX - 3}">R-7 RESTRICTED</text>`;
+  MOUNTAINS.filter((m) => m[2] >= 9000).forEach(([x, y]) => s += `<text x="${x * PX}" y="${y * PX}">^${ft(GROUND[y][x])}</text>`);
+  $("ground").innerHTML = s + `<text x="580" y="14">N ^</text><line x1="10" y1="390" x2="60" y2="390" stroke="#8fb7a8"/><text x="10" y="386">40 km</text>`;
+}
+function drawPlane(p, cls) {
+  const tag = { holding: " CIRCLING", landed: " LANDED", waiting: " AT MEET" }[p.status] || "";
+  return `<g class="pl ${cls}" transform="translate(${p.x * PX},${p.y * PX})"><path d="${SHAPE}" transform="rotate(${Math.round(p.heading)})"/><text x="10" y="-3">${p.id}${tag}</text><text x="10" y="7">${ft(p.alt)}ft ${spd(p.status === "landed" ? 0 : p.kt)}</text></g>`;
+}
+function marks(start, steps, now, color) { // numbered circle where each step starts
+  let s = "";
+  for (let i = now + 1; i < steps.length; i++) { const [x, y] = (i ? steps[i - 1].to : start).map((v) => v * PX); s += `<g class="mk"><circle cx="${x}" cy="${y}" r="5.5" stroke="${color}"/><text x="${x - 2}" y="${y + 2.5}">${i + 1}</text><text x="${x + 8}" y="${y - 6}">${steps[i].alt / 1000}k</text></g>`; }
+  return s; }
+const meetMark = (m) => { const [x, y] = m.pt.map((v) => v * PX); return `<g class="mk"><path d="M${x},${y - 7}l7,7l-7,7l-7,-7z" stroke="#3ee08f"/><text x="${x - 2.5}" y="${y + 2.5}">M</text><text x="${x + 9}" y="${y - 6}">MEET ${m.alt / 1000}k</text></g>`; };
+function drawMap() {
+  const em = S.em;
+  let s = "";
+  if (wx.on) wx.points.forEach((p) => { const a = (p.dir + 180) * Math.PI / 180, l = Math.min(16, 4 + p.wind / 4); s += (p.rain > 0 ? `<circle cx="${p.x * PX}" cy="${p.y * PX}" r="${Math.min(14, 4 + p.rain * 3)}" fill="#5cc8ff" opacity=".25"/>` : "") + `<line x1="${p.x * PX}" y1="${p.y * PX}" x2="${p.x * PX + Math.sin(a) * l}" y2="${p.y * PX - Math.cos(a) * l}" stroke="#9cf" opacity=".6"/>`; });
+  for (const st of S.storms) {
+    s += `<circle cx="${st.x * PX}" cy="${st.y * PX}" r="${st.r * PX}" fill="#ffb84d" opacity="${.12 + st.sev * .25}"/>`;
+    if (st.sev >= HARD) s += `<circle cx="${st.x * PX}" cy="${st.y * PX}" r="${st.r * Math.sqrt(1 - HARD / st.sev) * PX}" fill="#ff4d4d" fill-opacity=".25" stroke="#ff4d4d" stroke-dasharray="4 3"/>`;
+    s += `<text x="${st.x * PX - 20}" y="${st.y * PX + 3}" fill="#ffe7c2">${(st.name || "storm").toUpperCase()} ${st.sev.toFixed(1)}</text>`;
+  }
+  if (em && reportOld()) S.report.storms.forEach((st) => s += `<circle cx="${st.x * PX}" cy="${st.y * PX}" r="${st.r * PX}" fill="none" stroke="#ffe08a" stroke-dasharray="2 3"/>`);
+  for (const af of AIRPORTS) {
+    const a = em && em.airports.find((x) => x.id === af.id), canPick = !PILOT && a && a.ok && !em.arrived && em.chosen !== af.id;
+    s += `<g class="af ${em && em.route && em.route.airport === af.id ? "chosen" : canPick ? "pick" : a && !a.ok ? "no" : ""}" ${canPick ? `data-do="pick" data-v="${af.id}"` : ""}><rect x="${af.x * PX}" y="${af.y * PX}" width="10" height="10"/><text x="${af.x * PX + 12}" y="${af.y * PX + 8}">${af.id}${canPick ? " (click to land)" : ""}</text></g>`;
+  }
+  if (em) {
+    const e = plane(em.planeId);
+    if (em.route) { s += line(em.route.pts, "#ff4d4d", "", .3) + line([[e.x, e.y], ...e.path], "#ff4d4d", "6 3"); if (!em.arrived) s += marks(em.route.pts[0], em.route.steps, stepIndex(), "#ff4d4d"); }
+    S.planes.filter((p) => p.helping && p.route && !p.joined).forEach((p) => s += line([[p.x, p.y], ...p.path], "#3ee08f", "3 3") + marks(p.route.pts[0], p.route.steps, stepNow(p.route.steps, p), "#3ee08f") + meetMark(p.route.meet));
+    if (S.preview && S.preview.ok) s += `<g opacity=".55">${line(S.preview.pts, "#3ee08f", "3 3")}${marks(S.preview.pts[0], S.preview.steps, -1, "#3ee08f")}${meetMark(S.preview.meet)}</g>`;
+    S.planes.filter((p) => p !== e && (p.helping || p.id === S.helperId)).forEach((p) => s += drawPlane(p, "help"));
+    s += drawPlane(e, em.arrived ? "em" : "em flash");
+  } else S.planes.forEach((p) => s += drawPlane(p, ""));
+  if (live.on) { // real planes, moved forward with their speed so they don't jump every 10 s
+    const sec = Math.min(60, (Date.now() - live.at) / 1000);
+    for (const a of live.planes) {
+      const km = (a.gs_kt || 0) * 1.852 * sec / 3600, rad = (a.track || 0) * Math.PI / 180, lat = a.lat + km * Math.cos(rad) / 111, lon = a.lon + km * Math.sin(rad) / (111 * Math.cos(a.lat * Math.PI / 180));
+      const x = (lon - 6) * 75.7 / KM, y = (47.2 - lat) * 111 / KM;
+      if (inMap(x, y)) s += `<g class="pl real ${a.emergency ? "sos" : ""}" transform="translate(${x * PX},${y * PX})"><path d="${SHAPE}" transform="rotate(${a.track || 0}) scale(.75)"/><text x="8" y="-2">${a.callsign}${a.emergency ? " SQK " + a.squawk : ""}</text><text x="8" y="6">${a.alt_ft == null ? "?" : ft(a.alt_ft) + "ft"} ${a.gs_kt == null ? "" : spd(a.gs_kt)}</text></g>`;
+    } }
+  $("things").innerHTML = s; }
+const shown = {};
+function box(id, html) { if (shown[id] !== html) $(id).innerHTML = shown[id] = html; } // only redraw if it changed (so buttons keep working)
+const table = (head, rows) => `<table><tr>${head.map((h) => `<th>${h}</th>`).join("")}</tr>${rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("")}</table>`;
+const ageText = () => "Weather report " + Math.floor(reportAge() / 60) + " min " + reportAge() % 60 + " s old" + (reportOld() ? ' <span class="bad">(OLD, storms moving)</span>' : "");
+function emBox() {
+  const em = S.em;
+  if (!em) return "<h3>Emergency</h3>No emergency yet. " + ageText();
+  const p = plane(em.planeId);
+  let h = `<h3>Emergency - ${p.id}</h3><b>${em.kind}</b>. Max ${ft(em.ceiling)} ft, range ${em.range} km. ${ageText()}<br>`;
+  if (em.route) h += `<span class="ok">Landing at ${em.route.airport} (${em.route.name}), ${em.route.km} km, ~${mins(em.route.km, p.kt)} min at ${spd(p.kt)}.</span> ` + (em.oldWeather ? "Old weather, extra space kept. " : "") + (em.arrived ? `<b>LANDED.</b> ${em.helped ? "Airport is helping." : ""}` : `Step ${stepIndex() + 1} of ${em.route.steps.length}.`);
+  else h += em.airports.some((a) => a.ok) ? `<b class="now">PICK AN AIRPORT</b> - ${p.id} circles until you do.` : `<b class="bad">NO SAFE AIRPORT</b> - circling.`;
+  h += table(["Airport", "Safe?", "km", "Time", "Rank", ""], em.airports.map((a) => [a.id, a.ok ? '<span class="ok">yes</span>' : `<span class="bad">no - ${WHY[a.why]}</span>`, a.km ?? "-", a.ok ? "~" + a.eta + " min" : "-", a.rank || "-",
+    a.ok && !em.arrived ? (em.chosen === a.id ? "<b>PICKED</b>" : `<button data-do="pick" data-v="${a.id}">Land here</button>`) : ""]));
+  if (em.cantHelp) h += `<button data-do="remove">${em.cantHelp} can't help: remove it</button>`;
+  if (S.messages.some((m) => m.kind === "pilot" && m.status === "sent")) h += `<button data-do="pilotok">Pretend the pilot said ok</button>`;
+  return h; }
+function stepList(steps, now, dest, extra = "") {
+  return "<ol>" + steps.map((s, i) => `<li class="${i === now ? "now" : i < now ? "done" : ""}">${verb(s)}, heading ${h3(s.hdg)}, ${Math.round(s.km)} km to ${i === steps.length - 1 && dest ? dest : where(s.to)}<br><small class="g">${why(s)}</small></li>`).join("") + extra + "</ol>";
+}
+function helperSteps(r, p, eId, preview) {
+  const m = r.meet, waiting = !preview && !p.path.length, now = preview ? -1 : waiting ? r.steps.length : stepNow(r.steps, p);
+  return stepList(r.steps, now, "meeting point M", `<li class="${waiting ? "now" : ""}">${m.standby ? "Wait" : "Circle"} at M (${where(m.pt)}) at ${ft(m.alt)} ft<br><small class="g">safe: ${m.stormKm >= 999 ? "no storms" : m.stormKm + " km from storms"}, ground ${ft(m.ground)} ft, not restricted. ${timing(m, eId)}</small></li>` +
+    (m.standby ? "" : `<li>When ${eId} gets to M: fly 1000 ft above it and follow its steps</li>`));
+}
+const col = (title, p, body) => `<div class="box"><b>${title}</b><br><small class="g">Now ${ft(p.alt)} ft, ${spd(p.kt)}, heading ${h3(p.heading)}</small>${body}</div>`;
+function stepsBox() {
+  const em = S.em, cols = [];
+  if (em) {
+    const e = plane(em.planeId);
+    cols.push(col(e.id + (em.route ? " to " + em.route.airport : "") + " (EMERGENCY)", e, em.route ? stepList(em.route.steps, em.arrived ? 99 : stepIndex(), em.route.airport) : "<p>Circling, no airport yet.</p>"));
+    S.planes.filter((p) => p.helping && p !== e).forEach((p) => cols.push(col(p.id + " (HELPER)", p, p.joined ? `<p class="ok">Flying with ${e.id}, 1000 ft above.</p>` : p.route ? helperSteps(p.route, p, e.id) : "<p>Looking for a safe meeting point...</p>")));
+    const sel = S.helperId && plane(S.helperId);
+    if (S.preview && !sel.helping) cols.push(col(sel.id + " (PREVIEW, not sent yet)", sel, S.preview.ok ? helperSteps(S.preview, sel, e.id, true) : `<p class="bad">${S.preview.why}</p>`));
+  }
+  return "<h3>Flight steps</h3>" + (cols.length ? `<div class="cols">${cols.join("")}</div>` : "Steps show up when there's a route.");
+}
+function msgBox() {
+  return "<h3>Messages</h3>" + table(["Status", "To", "Message", ""], [...S.messages].reverse().map((m) => [`<span class="${m.status === "failed" || m.can === false ? "bad" : m.status === "acknowledged" ? "ok" : "g"}">${m.status}</span>`,
+    m.to, m.text + (m.note ? `<br><small>${m.note}</small>` : ""), m.status === "failed" ? `<button data-do="retry" data-v="${m.id}">Retry</button>` : ""]));
+}
+function nearBox() {
+  if (!S.em) return "<h3>Nearby planes</h3>Shows up when there's an emergency.";
+  const n = nearby();
+  return `<h3>Nearby planes</h3><small class="g">list made by ${n.src}</small>` + table(["Plane", "km", "Bearing", "Can it help?", ""], n.list.map((x) => {
+    const p = plane(x.id);
+    return [x.id + " " + x.note, x.d, h3(x.b), S.reach[x.id] || "", p.helping ? (p.joined ? "flying with it" : "helping") : S.em.arrived ? "" : `<button data-do="preview" data-v="${x.id}">Show route</button><button data-do="help" data-v="${x.id}">Ask to help</button>`];
+  })); }
+function pilotLine() {
+  const em = S.em;
+  if (!em || !em.route) return "";
+  if (em.arrived) return "Landed at " + em.route.airport + ".";
+  const i = stepIndex(), s = em.route.steps[i], left = Math.max(0, Math.round(sum(em.route.steps.slice(0, i + 1), (x) => x.km) - kmDone(em.route.steps, plane(em.planeId))));
+  return "Step " + (i + 1) + ": " + verb(s) + ", heading " + h3(s.hdg) + " for " + left + " km"; }
+function pilotBox() {
+  const em = S.em;
+  if (!em) return "<h3>Pilot view</h3>No emergency. Open the main page in another tab.";
+  const up = [...S.messages].reverse().find((m) => m.kind === "pilot");
+  return `<h3>Pilot view</h3><b class="bad">${em.planeId} - EMERGENCY - ${em.kind}</b><br>${ageText()}` +
+    (em.route ? `<p>Landing at <b>${em.route.airport}</b></p><h2 class="now">${pilotLine()}</h2>` + stepList(em.route.steps, em.arrived ? -1 : stepIndex(), em.route.airport) : `<h2 class="now">CIRCLE at or below ${ft(em.ceiling)} ft, waiting for an airport</h2>`) +
+    `Route message: ${up ? up.status : "-"} <button data-do="ack" ${up && up.status === "sent" ? "" : "disabled"}>Say ok</button>`;
+}
+const channel = new BroadcastChannel("sos_atc");
+channel.onmessage = ({ data }) => {
+  if (PILOT && data.type === "state") { S = data.state; draw(); }
+  if (!PILOT && data.type === "ack") { pilotOk("pilot tab"); draw(); }
+  if (!PILOT && data.type === "hello") channel.postMessage({ type: "state", state: S }); };
+function draw() {
+  $("status").textContent = `${clock()} ${S.running ? "RUNNING" : "PAUSED"} | server ${server === null ? "off" : "on"}`;
+  $("kph").className = unit === "kph" ? "on" : ""; $("mph").className = unit === "mph" ? "on" : "";
+  drawMap();
+  if (PILOT) return box("pilotBox", pilotBox());
+  document.querySelectorAll('[data-do="scen"]').forEach((b) => b.className = b.dataset.v === S.scen ? "on" : "");
+  $("pickPlane").value = S.chosenPlane; $("pickPlane").disabled = !!S.em;
+  $("wxBtn").textContent = wx.on ? "Real weather is ON" : "Use real weather"; $("wxBtn").className = wx.on ? "on" : "";
+  $("liveBtn").textContent = live.on ? "Live planes are ON" : "Show live planes"; $("liveBtn").className = live.on ? "on" : "";
+  box("emBox", emBox()); box("stepsBox", stepsBox()); box("msgBox", msgBox()); box("nearBox", nearBox());
+  box("wxBox", wxBox()); box("liveBox", liveBox());
+  box("logBox", "<h3>What happened</h3>" + S.log.join("<br>"));
+  channel.postMessage({ type: "state", state: S }); }
+let server = null;
+async function findServer() {
+  for (const base of location.protocol.startsWith("http") ? ["", "http://localhost:8000"] : ["http://localhost:8000"]) {
+    try { if ((await (await fetch(base + "/api/ping")).json()).ok) return server = base; } catch (e) {} }
+  server = null; }
+async function pythonNearby() {
+  if (server === null || !S.em) return;
+  const e = plane(S.em.planeId);
+  try {
+    const j = await (await fetch(server + "/api/nearby", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ emergency: e, others: S.planes.filter((p) => p !== e) }) })).json();
+    if (j.ok) { S.py = j.nearby; S.pyAt = Date.now(); }
+  } catch (err) {} }
+const live = { on: false, planes: [], at: 0, err: "" };
+async function getLive() {
+  if (!live.on) return;
+  if (server === null) await findServer();
+  if (server === null) live.err = "phs_server.py isn't running. Open a terminal in its folder and type: python phs_server.py";
+  else try { const j = await (await fetch(server + "/api/live")).json(); Object.assign(live, j.ok ? { planes: j.aircraft, source: j.source, at: Date.now(), err: "" } : { err: j.error }); } catch (e) { live.err = "lost the connection to phs_server.py"; server = null; }
+  draw(); }
+function liveBox() {
+  if (!live.on) return "<h3>Live planes (real)</h3>Off.";
+  return `<h3>Live planes (real)</h3><span class="bad">${live.err}</span>` + (live.at ? `<small class="g">${live.planes.length} planes from ${live.source}, ${Math.round((Date.now() - live.at) / 1000)} s ago. Real planes, made up map.</small>` +
+    table(["Callsign", "Type", "Altitude", "Speed", "Heading", "Squawk"], live.planes.map((a) => [`<span class="${a.emergency ? "bad" : ""}">${a.callsign}</span>`, a.type, a.alt_ft == null ? "-" : ft(a.alt_ft) + " ft", a.gs_kt == null ? "-" : spd(a.gs_kt), h3(a.track || 0), a.squawk])) : "");
+}
+const wx = { on: false, points: [], at: 0, err: "" };
+const WX = { 0: "clear", 1: "mostly clear", 2: "partly cloudy", 3: "cloudy", 45: "fog", 48: "fog", 51: "drizzle", 53: "drizzle", 55: "drizzle", 56: "freezing drizzle", 57: "freezing drizzle",
+  61: "light rain", 63: "rain", 65: "heavy rain", 66: "freezing rain", 67: "freezing rain", 71: "light snow", 73: "snow", 75: "heavy snow", 77: "snow", 80: "showers", 81: "showers",
+  82: "heavy showers", 85: "snow showers", 86: "heavy snow showers", 95: "thunderstorm", 96: "thunderstorm + hail", 99: "thunderstorm + hail" };
+const badness = (code, gust) => Math.min(1, (code >= 95 ? .9 : [65, 67, 75, 82, 86].includes(code) ? .6 : [63, 66, 73, 81, 85].includes(code) ? .4 : [51, 53, 55, 56, 57, 61, 71, 77, 80].includes(code) ? .2 : 0) + (gust > 70 ? .2 : 0));
+async function getWeather() {
+  if (!wx.on) return;
+  const spots = [];
+  for (let y = 2.5; y < H; y += 5) for (let x = 2.5; x < W; x += 5) spots.push([x, y]);
+  try {
+    const r = await fetch("https://api.open-meteo.com/v1/forecast?latitude=" + spots.map((p) => latLon(p)[0].toFixed(3)) + "&longitude=" + spots.map((p) => latLon(p)[1].toFixed(3)) +
+      "&current=weather_code,precipitation,wind_speed_10m,wind_direction_10m,wind_gusts_10m");
+    if (r.status === 429) throw new Error("Open-Meteo says too many requests, wait a minute and try again");
+    const data = await r.json();
+    if (data.error) throw new Error(data.reason);
+    wx.points = [].concat(data).map((d, i) => ({ x: spots[i][0], y: spots[i][1], code: d.current.weather_code, rain: d.current.precipitation, wind: d.current.wind_speed_10m,
+      dir: d.current.wind_direction_10m, gust: d.current.wind_gusts_10m, bad: Math.round(badness(d.current.weather_code, d.current.wind_gusts_10m) * 10) / 10 }));
+    Object.assign(wx, { at: Date.now(), err: "" });
+    useRealWeather();
+  } catch (e) { wx.err = "couldn't get the weather: " + e.message; }
+  draw(); }
+function useRealWeather() {
+  S.storms = wx.points.filter((p) => p.bad >= .4).map((p) => ({ x: p.x, y: p.y, r: 3.5, sev: p.bad, vx: 0, name: WX[p.code] }));
+  weatherChanged("real weather, " + S.storms.length + " bad weather areas"); }
+function wxBox() {
+  if (!wx.on) return "<h3>Real weather</h3>Off, the storms are from the scenario.";
+  const worst = [...wx.points].sort((a, b) => b.bad - a.bad || b.gust - a.gust).slice(0, 10);
+  return `<h3>Real weather</h3><span class="bad">${wx.err}</span>` + (wx.at ? `<small class="g">${wx.points.length} spots from Open-Meteo, ${Math.round((Date.now() - wx.at) / 60000)} min ago. ${S.storms.length} bad areas the planes avoid.</small>` +
+    table(["Where", "Weather", "Rain", "Wind", "Gusts", "Bad"], worst.map((p) => [where([p.x, p.y]), WX[p.code] || p.code, p.rain + " mm", wind(p.wind) + " from " + h3(p.dir), wind(p.gust), p.bad])) : ""); }
+// popup before the first start + the tutorial (each step = [thing to point at, what to say])
+const INTRO = `<h3>Before you start</h3><p>SOS ATC is a pretend air traffic control screen. Normal planes fly around the map until one has an emergency.
+  Then <b>you</b> are the controller: you pick the airport it lands at, the program plans a safe route around storms and mountains
+  and writes it as steps for the pilot, and you can send other planes to help it.</p>
+  <p>Nothing here is real flight info, it's a school project. New here? Do the tutorial, it's quick.</p>
+  <button data-do="go">Start simulation</button> <button data-do="tut">Show me how (tutorial)</button>`;
+const TUT = [
+  ["map", "This is the map. Darker green is low ground, lighter green is mountains. Orange circles are storms, blue squares are airports and the green planes are normal flights."],
+  ["simBox", "Start, Pause and Reset run the sim. The speed box makes time go faster (1x is real time). The three buttons below load a different scenario."],
+  ["pickPlane", "Pick a plane here and press Trigger emergency. That plane turns red and has to land soon."],
+  ["emBox", "After the emergency starts this lists every airport it could land at. Press Land here (or click the airport on the map) to pick one. It won't plan a route until you pick!"],
+  ["stepsBox", "The steps the pilot has to fly: heading, altitude and distance. They change because of mountains and storms. The yellow one is the step it's on right now."],
+  ["nearBox", "Other planes close by. Show route draws how they would get there, Ask to help sends one to meet the emergency plane at a safe spot."],
+  ["msgBox", "Messages sent to the pilot and the helpers. Sometimes they fail, then press Retry."],
+  ["dataBtns", "Use real weather from Open-Meteo instead of the made up storms, or show real planes in purple (needs python phs_server.py running)."],
+  ["pilotLink", "Opens what the pilot sees in a new tab. It follows this page by itself. That's it, you're ready!"]];
+let tutStep = -1, introSeen = false;
+function popup(html) {
+  document.querySelectorAll(".hl").forEach((e) => e.classList.remove("hl"));
+  const t = html && TUT[tutStep];
+  $("pop").hidden = !html; $("pop").innerHTML = html || ""; $("pop").className = t ? "side" : "";
+  if (t) { $(t[0]).classList.add("hl"); $(t[0]).scrollIntoView({ block: "center", behavior: "smooth" }); } }
+function showTut() {
+  const last = tutStep === TUT.length - 1;
+  popup(`<h3>Tutorial ${tutStep + 1} / ${TUT.length}</h3><p>${TUT[tutStep][1]}</p>` + (tutStep ? `<button data-do="back">Back</button>` : "") +
+    (last ? `<button data-do="go">Start simulation</button>` : `<button data-do="next">Next</button> <button data-do="close">Close</button>`)); }
+const ACTIONS = {
+  unit: (v) => unit = v, home: () => document.body.classList.add("home"), enter: () => document.body.classList.remove("home"),
+  start: () => { if (!introSeen) { introSeen = true; tutStep = -1; popup(INTRO); } else if (!S.running) { S.running = true; log("Started."); } },
+  go: () => { tutStep = -1; popup(); introSeen = true; ACTIONS.start(); }, close: () => { tutStep = -1; popup(); },
+  tut: () => { document.body.classList.remove("home"); tutStep = 0; showTut(); }, next: () => { tutStep++; showTut(); }, back: () => { tutStep--; showTut(); },
+  pause: () => { if (S.running) { S.running = false; log("Paused."); } },
+  reset: () => load(S.scen), scen: (v) => load(v), trigger: () => { trigger(); updateReach(); pythonNearby(); },
+  worse: () => { S.storms.forEach((s) => s.sev = Math.min(1, Math.round(s.sev * 10 + 1) / 10)); weatherChanged("storms got worse"); },
+  better: () => { S.storms.forEach((s) => s.sev = Math.max(.1, Math.round(s.sev * 10 - 1) / 10)); weatherChanged("storms got better"); },
+  east: () => { S.storms.forEach((s) => s.x += 3); weatherChanged("storms moved 24 km east"); },
+  realwx: () => { wx.on = !wx.on; if (wx.on) getWeather(); else { wx.points = []; wx.at = 0; S.storms = copy(SCENARIOS[S.scen].storms); weatherChanged("back to the scenario storms"); } },
+  live: () => { live.on = !live.on; live.at = 0; live.err = ""; getLive(); },
+  pick, retry: (v) => { const m = S.messages.find((x) => x.id === +v); if (m.status === "failed") { Object.assign(m, { status: "pending", tries: 2, at: S.t, note: "" }); log("Trying again: " + m.to + "."); } },
+  remove: () => { const em = S.em; em.removed.push(em.cantHelp); log("Removed " + em.cantHelp + ". Pick another airport."); if (em.chosen === em.cantHelp) em.chosen = null; em.cantHelp = null; planEmergency("re-planned"); },
+  pilotok: () => pilotOk("pretend"), preview: (v) => { S.helperId = v; updateReach(); }, help: (v) => { askToHelp(v); updateReach(); }, };
+function doAction(el) {
+  const what = el.dataset.do;
+  if (el.disabled) return;
+  if (PILOT) { if (what === "ack") channel.postMessage({ type: "ack" }); if (what === "unit") unit = el.dataset.v; }
+  else ACTIONS[what](el.dataset.v);
+  draw(); }
+document.addEventListener("pointerdown", (e) => { const el = e.target.closest("[data-do]"); if (el && !e.button) { e.preventDefault(); doAction(el); } });
+document.addEventListener("click", (e) => { const el = e.target.closest("[data-do]"); if (el && !e.detail) doAction(el); });
+addEventListener("hashchange", () => location.reload());
+drawGround();
+if (PILOT) {
+  document.body.classList.add("pilot");
+  load("mountain");
+  channel.postMessage({ type: "hello" });
+  draw();
+} else {
+  document.body.classList.add("home");
+  load("mountain");
+  $("pickPlane").innerHTML = FLEET.map((f) => `<option>${f[0]}</option>`).join("");
+  $("pickPlane").onchange = (e) => S.chosenPlane = e.target.value;
+  $("speed").onchange = (e) => { timeScale = parseInt(e.target.value); log("Speed is now " + timeScale + "x."); };
+  draw();
+  findServer();
+  setInterval(tick, 100);
+  setInterval(() => S.running || draw(), 1000); // keeps live planes moving when paused
+  setInterval(pythonNearby, 1000);
+  setInterval(findServer, 5000);
+  setInterval(getLive, 10000);
+  setInterval(getWeather, 600000); }
+</script>
+</body>
+</html>
